@@ -10,7 +10,6 @@ pip3 install cbor2 cryptography requests
 run the script:
 (venv) bash-3.2$ python3 ex_certs_v2.py 
 
-
 --- VICAL Decoding and Extraction Script ---
 
 Created temporary directory: /var/folders/xr/gp59cg0s4vjcb643tlyxq9lw0000gp/T/tmpkf6p5i6a
