@@ -15,7 +15,7 @@ URL_INTERMEDIATE_CA = 'https://vical.dts.aamva.org/certificates/ca_intermediate'
 URL_VICAL_SIGNER = 'https://vical.dts.aamva.org/certificates/vicalsigner'
 #TODO: determine if there is an endpoint - DONE
 #URL_VICAL_FILE = 'https://vical.dts.aamva.org/vical/vc/vc-2025-09-27-1758957681255'
-URL_VICAL_FILE = 'https://vical.dts.aamva.org/vical/vc/'
+URL_VICAL_FILE = 'https://vical.dts.aamva.org/vical/vc/vc-2025-11-18-1763491092481' #'https://vical.dts.aamva.org/vical/vc/'
 
 # --- Configuration ---
 OUTPUT_CERT_DIR = 'extracted_iacas'
