@@ -1,182 +1,201 @@
 import cbor2
-import os
 import requests
 import tempfile
-import shutil
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.exceptions import InvalidSignature
-import pprint
+from pathlib import Path
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import utils
+from cryptography.exceptions import InvalidSignature
 
 
-# --- NEW: AAMVA DTS Endpoints ---
+# --- Configuration & Endpoints ---
+BASE_URL = "https://vical.dts.aamva.org/"
+
+# Trust Anchor Endpoints
 URL_ROOT_CA = 'https://vical.dts.aamva.org/certificates/ca'
 URL_INTERMEDIATE_CA = 'https://vical.dts.aamva.org/certificates/ca_intermediate'
 URL_VICAL_SIGNER = 'https://vical.dts.aamva.org/certificates/vicalsigner'
-#TODO: determine if there is an endpoint - DONE
-#URL_VICAL_FILE = 'https://vical.dts.aamva.org/vical/vc/vc-2025-09-27-1758957681255'
-#URL_VICAL_FILE = 'https://vical.dts.aamva.org/vical/vc/vc-2025-11-18-1763491092481' #'https://vical.dts.aamva.org/vical/vc/'
 
-# --- Configuration ---
-OUTPUT_CERT_DIR = 'extracted_iacas'
+# Output Settings
+OUTPUT_CERT_DIR = Path('extracted_iacas')
+TARGET_FILENAME = "vical.cbor"
 
-# 1. Define the target URL and output filename
-BASE_URL = "https://vical.dts.aamva.org/"
-TARGET_FILENAME = "vical.cbor" 
 
-# 2. Fetch the HTML content
-try:
-    response = requests.get(BASE_URL)
-    response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-except requests.exceptions.RequestException as e:
-    print(f"Error fetching the page: {e}")
-    exit()
+# --- Helper Functions ---
 
-# 3. Parse the HTML and Locate the Target Link
-soup = BeautifulSoup(response.content, 'html.parser')
-
-# A. Find the table with id="currentvical"
-current_vical_table = soup.find('table', id='currentvical')
-
-if not current_vical_table:
-    print("❌ Error: Could not find the HTML table with id='currentvical'.")
-    exit()
-
-# B. Within that table, find the first <a> tag with class="btn btn-primary"
-# Using a dictionary for class search ensures exact matching of the classes.
-download_link_tag = current_vical_table.find('a', class_='btn btn-primary')
-
-if not download_link_tag:
-    print("❌ Error: Could not find an <a> tag with class='btn btn-primary' inside the table.")
-    exit()
-
-# 4. Extract the full download URL
-relative_url = download_link_tag.get('href')
-if not relative_url:
-    print("❌ Error: The found link tag does not have an 'href' attribute.")
-    exit()
-    
-full_download_url = urljoin(BASE_URL, relative_url)
-
-print(f"✅ Found Current VICAL URL: {full_download_url}")
-
-URL_VICAL_FILE = full_download_url
-
-# --- 5. Download the File ---
-
-# It's good practice to derive the filename from the URL if possible, 
-# but we stick to the hardcoded name for consistency.
-#try:
-#    print(f"Starting download to {TARGET_FILENAME}...")
-    # Use stream=True for potentially large files
-#    file_response = requests.get(full_download_url, stream=True)
-#    file_response.raise_for_status()
-
-    # Save the content to a file
-#    with open(TARGET_FILENAME, 'wb') as f:
-        # Write the file in chunks#
-#        for chunk in file_response.iter_content(chunk_size=8192):
-#            f.write(chunk)
-
-#    print(f"🎉 Successfully downloaded Current VICAL to: {os.path.abspath(TARGET_FILENAME)}")
-
-#except requests.exceptions.RequestException as e:
-#    print(f"❌ Error downloading the file: {e}")
-
-# --- NEW: Helper function to download files ---
-def download_file(url, destination):
-    """Downloads a file from a URL to a specified destination."""
-    print(f"Downloading {url} to {destination}...")
+def get_current_vical_url(base_url):
+    """Scrapes the base URL to find the dynamic link for the current VICAL file."""
+    print(f"🔍 Scraping {base_url} for current VICAL link...")
     try:
-        # Use stream=True for potentially large files, although these are certs
-        response = requests.get(url, stream=True)
-        response.raise_for_status() # Check for bad HTTP status codes (4xx or 5xx)
+        response = requests.get(base_url)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Error fetching the page: {e}")
+        return None
 
-        with open(destination, 'wb') as f:
+    soup = BeautifulSoup(response.content, 'html.parser')
+    
+    # 1. Find the specific table
+    current_vical_table = soup.find('table', id='currentvical')
+    if not current_vical_table:
+        print("❌ Error: Could not find table with id='currentvical'.")
+        return None
+
+    # 2. Find the download button inside that table
+    download_link_tag = current_vical_table.find('a', class_='btn btn-primary')
+    if not download_link_tag:
+        print("❌ Error: Could not find 'btn btn-primary' link inside the table.")
+        return None
+
+    # 3. Construct full URL
+    relative_url = download_link_tag.get('href')
+    if not relative_url:
+        print("❌ Error: Link tag missing 'href' attribute.")
+        return None
+        
+    full_download_url = urljoin(base_url, relative_url)
+    print(f"✅ Found VICAL URL: {full_download_url}")
+    return full_download_url
+
+def download_file(url, destination_path):
+    """Downloads a file from a URL to a specified Path object."""
+    print(f"⬇️  Downloading {url}...")
+    try:
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
+        with open(destination_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
-        
-        print(f"  -> Successfully downloaded.")
-        return True # Return True on success
-
+        return True
     except requests.exceptions.RequestException as e:
-        print(f"  -> ❌ Download failed for {url}. Error: {e}")
-        return False # Return False on failure
-        
+        print(f"❌ Download failed: {e}")
+        return False
+
 def load_cert_from_pem(file_path):
-    """Loads a certificate from a PEM/CRT file."""
+    """Loads a certificate from a PEM file."""
     try:
         with open(file_path, 'rb') as f:
             return x509.load_pem_x509_certificate(f.read())
     except FileNotFoundError:
-        print(f"❌ Error: Certificate file not found at '{file_path}'")
+        print(f"❌ Certificate file not found: {file_path}")
+        return None
+    except ValueError:
+        print(f"❌ Could not parse PEM certificate: {file_path}")
         return None
 
 def load_vical_file(file_path):
-    """Loads and decodes the outer VICAL CBOR structure."""
+    """Loads and decodes the CBOR VICAL structure."""
     try:
         with open(file_path, 'rb') as f:
             return cbor2.load(f)
-    except FileNotFoundError:
-        print(f"❌ Error: VICAL file not found at '{file_path}'")
-        return None
-    except cbor2.CBORDecodeError as e:
-        print(f"❌ Error decoding CBOR file: {e}")
+    except (FileNotFoundError, cbor2.CBORDecodeError) as e:
+        print(f"❌ Error loading VICAL file: {e}")
         return None
 
+# --- Core Logic ---
+
 def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
-    """Verifies the cert chain and extracts certificates, SKIPPING final signature validation."""
+    """
+    Verifies the cert chain and the COSE_Sign1 signature of the VICAL payload.
+    Handles Raw-to-DER signature conversion for COSE compliance.
+    """
     if not isinstance(vical_data, list) or len(vical_data) < 4:
-        print(f"❌ VICAL structure is not a list with at least 4 elements as expected.")
+        print("❌ VICAL structure invalid (expected list of length 4+).")
         return
 
     try:
-        payload_with_certs = vical_data[2]
-
-        if not isinstance(payload_with_certs, bytes):
-             print(f"❌ Error: Expected payload at index 2 to be bytes, but it was {type(payload_with_certs).__name__}")
-             return
-
-        print("\nVerifying certificate chain...")
+        # COSE_Sign1 Structure: [protected_headers, unprotected_headers, payload, signature]
+        protected_headers_bytes = vical_data[0]
+        payload = vical_data[2]
+        raw_signature = vical_data[3]
+        
+        print("\n🔐 Verifying Trust Chain...")
+        
+        # 1. Verify VICAL Signer (VSC) using Intermediate CA
+        # (X.509 certs use DER signatures natively, so this usually just works)
         intermediate_ca_cert.public_key().verify(
             vsc_cert.signature,
             vsc_cert.tbs_certificate_bytes,
             ec.ECDSA(vsc_cert.signature_hash_algorithm),
         )
-        print("✅ VSC is trusted by the Intermediate CA.")
+        print("   ✅ VICAL Signer is trusted by Intermediate CA.")
 
+        # 2. Verify Intermediate CA using Root CA
         root_ca_cert.public_key().verify(
             intermediate_ca_cert.signature,
             intermediate_ca_cert.tbs_certificate_bytes,
             ec.ECDSA(intermediate_ca_cert.signature_hash_algorithm),
         )
-        print("✅ Intermediate CA is trusted by the Root CA.")
-        print("✅ Full certificate chain is valid!")
+        print("   ✅ Intermediate CA is trusted by Root CA.")
+        
+        print("\n🔐 Verifying VICAL COSE Signature...")
 
-        print("\n⚠️ SKIPPING final signature validation of VICAL data.")
+        # --- A. Determine Hash Algorithm from Protected Headers ---
+        # Decode the protected header to find the 'alg' ID
+        ph_map = cbor2.loads(protected_headers_bytes)
+        alg_id = ph_map.get(1) # Label 1 is 'alg'
+        
+        # Default to SHA256 (ES256), but handle others
+        if alg_id == -7:  # ES256
+            hash_alg = hashes.SHA256()
+            curve_size = 32 # bytes (256 bits)
+            print("      -> Algorithm: ES256 (SHA-256)")
+        elif alg_id == -35: # ES384
+            hash_alg = hashes.SHA384()
+            curve_size = 48 # bytes (384 bits)
+            print("      -> Algorithm: ES384 (SHA-384)")
+        else:
+            print(f"      ⚠️ Unknown Algorithm ID: {alg_id}. Defaulting to SHA256.")
+            hash_alg = hashes.SHA256()
+            curve_size = 32
 
-        decoded_records = cbor2.loads(payload_with_certs)
+        # --- B. Convert Signature from Raw (COSE) to DER (Python/OpenSSL) ---
+        # COSE Signatures are R || S (Raw concatenation).
+        # Python verify() expects ASN.1 DER.
+        if len(raw_signature) != (curve_size * 2):
+            print(f"      ⚠️ Warning: Signature length {len(raw_signature)} does not match expected {curve_size*2}.")
+        
+        r = int.from_bytes(raw_signature[:curve_size], byteorder='big')
+        s = int.from_bytes(raw_signature[curve_size:], byteorder='big')
+        der_signature = utils.encode_dss_signature(r, s)
+
+        # --- C. Construct Sig_Structure and Verify ---
+        # Structure: ['Signature1', protected_body_bytes, external_aad, payload_bytes]
+        sig_structure = ['Signature1', protected_headers_bytes, b'', payload]
+        tbs_data = cbor2.dumps(sig_structure)
+
+        vsc_cert.public_key().verify(
+            der_signature, # Use the converted DER signature
+            tbs_data,
+            ec.ECDSA(hash_alg) 
+        )
+        print("   ✅ VICAL Payload signature is VALID.")
+
+        # 3. Decode Payload and Extract
+        decoded_records = cbor2.loads(payload)
         final_records_list = decoded_records.get('certificateInfos')
         extract_and_save_iacas(final_records_list)
 
-    except InvalidSignature as e:
-        print(f"❌ Certificate chain validation FAILED. Reason: {e}")
+    except InvalidSignature:
+        print("❌ CRITICAL: Signature validation FAILED. The VICAL file may be tampered with.")
     except Exception as e:
-        print(f"❌ An unexpected error occurred during processing: {e}")
-
-def extract_and_save_iacas(issuer_records):
-    """Extracts Issuer Authority Certificates and renames them based on a defined map."""
-    if issuer_records is None:
-        print("❌ Could not find the list of certificates in the payload. Halting extraction.")
-        return
+        print(f"❌ Unexpected error in processing: {e}")
         
-    if not os.path.exists(OUTPUT_CERT_DIR):
-        os.makedirs(OUTPUT_CERT_DIR)
+def extract_and_save_iacas(issuer_records):
+    """Iterates through records, names them, and saves to disk."""
+    if not issuer_records:
+        print("❌ No certificates found in payload.")
+        return
 
-    # --- Renaming map for specific certificates TODO: make filenaming dynamic based on the state reflected in the certificate metadata---
+    # Create output directory
+    OUTPUT_CERT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Map for friendly names
     rename_map = {
         'alaska_dmv_iaca.pem': 'ak_certificate.pem',
         'carswsnpdojmtgov.pem': 'mt_certificate.pem',
@@ -189,101 +208,99 @@ def extract_and_save_iacas(issuer_records):
         'va_mid_iaca.pem': 'va_certificate.pem',
         'mdot_mva_mdl_root.pem': 'md_certificate.pem'
     }
-    # ----------------------------------------------------
-    print(f"\nFound {len(issuer_records)} issuer certificates. Extracting and renaming...")
+
+    print(f"\n📂 Extracting {len(issuer_records)} certificates to '{OUTPUT_CERT_DIR}'...")
+
     for record in issuer_records:
+        # Handle inconsistent keys in source data
         cert_der = record.get('certificate') or record.get('iaca')
         if not cert_der:
-            print("  -> ⚠️ Could not find certificate bytes in a record. Skipping.")
             continue
+
         try:
             cert = x509.load_der_x509_certificate(cert_der)
-            subject = cert.subject.rfc4514_string()
+            
+            # Get Common Name (CN) for filename
             cn_attr = cert.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)
+            
+            if cn_attr:
+                # Sanitize filename
+                raw_name = cn_attr[0].value
+                safe_name = "".join(c for c in raw_name if c.isalnum() or c in (' ', '-')).strip().replace(' ', '_').lower()
+                filename = f"{safe_name}.pem"
+            else:
+                filename = "unknown_issuer.pem"
 
-            # Generate the original, safe filename
-            filename_safe = ''.join(e for e in cn_attr[0].value if e.isalnum() or e in (' ','-')).replace(' ', '_')
-            original_filename = f"{filename_safe.lower()}.pem" if cn_attr else 'unknown_issuer.pem'
-
-            # Check the map and apply the new name if it exists
-            final_filename = rename_map.get(original_filename, original_filename)
-
-            # --- NEW: File Serialization Logic ---
-            output_path = os.path.join(OUTPUT_CERT_DIR, final_filename)
+            # Apply rename map
+            filename = rename_map.get(filename, filename)
+            
+            # Handle duplicates
+            file_path = OUTPUT_CERT_DIR / filename
             counter = 1
-            # Loop while the file path already exists
-            while os.path.exists(output_path):
-                # Create a new name with a prefix and update the path
-                new_filename = f"{counter}_{final_filename}"
-                output_path = os.path.join(OUTPUT_CERT_DIR, new_filename)
+            while file_path.exists():
+                file_path = OUTPUT_CERT_DIR / f"{counter}_{filename}"
                 counter += 1
-            # ------------------------------------
 
-            pem_cert = cert.public_bytes(encoding=serialization.Encoding.PEM)
-
-            with open(output_path, 'wb') as f:
-                f.write(pem_cert)
-
-            # Get the final actual filename from the full path
-            actual_filename = os.path.basename(output_path)
-            rename_notice = f" (renamed from {original_filename})" if actual_filename != original_filename else ""
-
-            print(f"  -> ✅ Extracted and saved '{subject}' to {output_path}{rename_notice}")
+            # Save
+            with open(file_path, 'wb') as f:
+                f.write(cert.public_bytes(encoding=serialization.Encoding.PEM))
+            
+            print(f"  -> Saved: {file_path.name}")
 
         except Exception as e:
-            print(f"  -> ❌ Failed to process a certificate record: {e}")
+            print(f"  -> ⚠️ Failed to save a certificate: {e}")
 
-# --- UPDATED: Main Execution Block ---
+# --- Main Execution ---
+
 if __name__ == "__main__":
-    print("--- VICAL Decoding and Extraction Script ---")
-    
-    # Create a temporary directory to store downloaded files
-    temp_dir = tempfile.mkdtemp()
-    print(f"\nCreated temporary directory: {temp_dir}")
-    
-    try:
-        # Define file paths within the temporary directory
-        root_ca_path = os.path.join(temp_dir, 'ca_root.crt')
-        intermediate_ca_path = os.path.join(temp_dir, 'ca_intermediate.crt')
-        vsc_path = os.path.join(temp_dir, 'vicalsigner.crt')
-        vical_path = os.path.join(temp_dir, 'aamva_vical.cbor')
-        
-        # Download all required files
-        if not all([
-            download_file(URL_ROOT_CA, root_ca_path),
-            download_file(URL_INTERMEDIATE_CA, intermediate_ca_path),
-            download_file(URL_VICAL_SIGNER, vsc_path),
-            download_file(URL_VICAL_FILE, vical_path)
-        ]):
-            print("\n❌ Halting script due to download failure.")
+    print("--- 🚀 VICAL Extraction Script ---")
+
+    # 1. Scrape the URL first
+    vical_file_url = get_current_vical_url(BASE_URL)
+    if not vical_file_url:
+        print("❌ Could not determine VICAL URL. Exiting.")
+        exit(1)
+
+    # 2. Create Temporary Directory (Auto-cleans up on exit)
+    with tempfile.TemporaryDirectory() as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        print(f"\nCreated temp workspace: {temp_dir}")
+
+        # Define temporary paths
+        paths = {
+            'root': temp_dir / 'ca_root.crt',
+            'inter': temp_dir / 'ca_intermediate.crt',
+            'vsc': temp_dir / 'vicalsigner.crt',
+            'vical': temp_dir / 'aamva_vical.cbor'
+        }
+
+        # 3. Download everything
+        downloads_ok = all([
+            download_file(URL_ROOT_CA, paths['root']),
+            download_file(URL_INTERMEDIATE_CA, paths['inter']),
+            download_file(URL_VICAL_SIGNER, paths['vsc']),
+            download_file(vical_file_url, paths['vical'])
+        ])
+
+        if not downloads_ok:
+            print("\n❌ Critical download failed. Exiting.")
             exit(1)
 
-        print("\n--- Starting Processing ---")
-        
-        # Load all certificates from their temporary paths
-        root_ca_cert = load_cert_from_pem(root_ca_path)
-        intermediate_ca_cert = load_cert_from_pem(intermediate_ca_path)
-        vsc_cert = load_cert_from_pem(vsc_path)
-        
-        if not root_ca_cert or not intermediate_ca_cert or not vsc_cert:
+        # 4. Load Certificates
+        root_ca = load_cert_from_pem(paths['root'])
+        inter_ca = load_cert_from_pem(paths['inter'])
+        vsc_cert = load_cert_from_pem(paths['vsc'])
+
+        if not (root_ca and inter_ca and vsc_cert):
+            print("\n❌ Failed to load trust chain certificates.")
             exit(1)
 
-        print(f"✅ DTS Root CA loaded: {root_ca_cert.subject.rfc4514_string()}")
-        print(f"✅ DTS Intermediate CA loaded: {intermediate_ca_cert.subject.rfc4514_string()}")
-        print(f"✅ VICAL Signer Certificate loaded: {vsc_cert.subject.rfc4514_string()}")
-
-        vical_data = load_vical_file(vical_path)
+        # 5. Load VICAL Data
+        vical_data = load_vical_file(paths['vical'])
         if not vical_data:
             exit(1)
-        print("✅ VICAL CBOR file successfully parsed.")
 
-        # Pass all necessary certs to the processing function
-        process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert)
-    
-    finally:
-        # Clean up the temporary directory and its contents
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            print(f"\n✅ Cleaned up temporary directory: {temp_dir}")
-            
-    print("\n--- Script finished. ---")
+        # 6. Process
+        process_vical(vical_data, root_ca, inter_ca, vsc_cert)
+
+    print("\n--- ✅ Script Finished ---")
