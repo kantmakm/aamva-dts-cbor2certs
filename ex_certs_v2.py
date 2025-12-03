@@ -8,6 +8,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.exceptions import InvalidSignature
 import pprint
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+import os # Added for path handling
 
 # --- NEW: AAMVA DTS Endpoints ---
 URL_ROOT_CA = 'https://vical.dts.aamva.org/certificates/ca'
@@ -15,26 +18,94 @@ URL_INTERMEDIATE_CA = 'https://vical.dts.aamva.org/certificates/ca_intermediate'
 URL_VICAL_SIGNER = 'https://vical.dts.aamva.org/certificates/vicalsigner'
 #TODO: determine if there is an endpoint - DONE
 #URL_VICAL_FILE = 'https://vical.dts.aamva.org/vical/vc/vc-2025-09-27-1758957681255'
-URL_VICAL_FILE = 'https://vical.dts.aamva.org/vical/vc/vc-2025-11-18-1763491092481' #'https://vical.dts.aamva.org/vical/vc/'
+#URL_VICAL_FILE = 'https://vical.dts.aamva.org/vical/vc/vc-2025-11-18-1763491092481' #'https://vical.dts.aamva.org/vical/vc/'
 
 # --- Configuration ---
 OUTPUT_CERT_DIR = 'extracted_iacas'
 
+# 1. Define the target URL and output filename
+BASE_URL = "https://vical.dts.aamva.org/"
+TARGET_FILENAME = "vical.cbor" 
+
+# 2. Fetch the HTML content
+try:
+    response = requests.get(BASE_URL)
+    response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+except requests.exceptions.RequestException as e:
+    print(f"Error fetching the page: {e}")
+    exit()
+
+# 3. Parse the HTML and Locate the Target Link
+soup = BeautifulSoup(response.content, 'html.parser')
+
+# A. Find the table with id="currentvical"
+current_vical_table = soup.find('table', id='currentvical')
+
+if not current_vical_table:
+    print("❌ Error: Could not find the HTML table with id='currentvical'.")
+    exit()
+
+# B. Within that table, find the first <a> tag with class="btn btn-primary"
+# Using a dictionary for class search ensures exact matching of the classes.
+download_link_tag = current_vical_table.find('a', class_='btn btn-primary')
+
+if not download_link_tag:
+    print("❌ Error: Could not find an <a> tag with class='btn btn-primary' inside the table.")
+    exit()
+
+# 4. Extract the full download URL
+relative_url = download_link_tag.get('href')
+if not relative_url:
+    print("❌ Error: The found link tag does not have an 'href' attribute.")
+    exit()
+    
+full_download_url = urljoin(BASE_URL, relative_url)
+
+print(f"✅ Found Current VICAL URL: {full_download_url}")
+
+URL_VICAL_FILE = full_download_url
+
+# --- 5. Download the File ---
+
+# It's good practice to derive the filename from the URL if possible, 
+# but we stick to the hardcoded name for consistency.
+#try:
+#    print(f"Starting download to {TARGET_FILENAME}...")
+    # Use stream=True for potentially large files
+#    file_response = requests.get(full_download_url, stream=True)
+#    file_response.raise_for_status()
+
+    # Save the content to a file
+#    with open(TARGET_FILENAME, 'wb') as f:
+        # Write the file in chunks#
+#        for chunk in file_response.iter_content(chunk_size=8192):
+#            f.write(chunk)
+
+#    print(f"🎉 Successfully downloaded Current VICAL to: {os.path.abspath(TARGET_FILENAME)}")
+
+#except requests.exceptions.RequestException as e:
+#    print(f"❌ Error downloading the file: {e}")
+
 # --- NEW: Helper function to download files ---
 def download_file(url, destination):
     """Downloads a file from a URL to a specified destination."""
+    print(f"Downloading {url} to {destination}...")
     try:
-        print(f"Downloading {os.path.basename(destination)} from {url}...")
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()  # Raises an HTTPError for bad responses (4xx or 5xx)
-        with open(destination, 'wb') as f:
-            f.write(response.content)
-        print(f"✅ Successfully saved to {destination}")
-        return True
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Failed to download {url}. Error: {e}")
-        return False
+        # Use stream=True for potentially large files, although these are certs
+        response = requests.get(url, stream=True)
+        response.raise_for_status() # Check for bad HTTP status codes (4xx or 5xx)
 
+        with open(destination, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        print(f"  -> Successfully downloaded.")
+        return True # Return True on success
+
+    except requests.exceptions.RequestException as e:
+        print(f"  -> ❌ Download failed for {url}. Error: {e}")
+        return False # Return False on failure
+        
 def load_cert_from_pem(file_path):
     """Loads a certificate from a PEM/CRT file."""
     try:

@@ -6,3 +6,8 @@ cbor2
 
 # For cryptographic operations (certificates, signatures, etc.)
 cryptography
+
+bs4
+
+urllib3
+
