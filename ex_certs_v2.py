@@ -10,7 +10,7 @@ from cryptography.exceptions import InvalidSignature
 import pprint
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-import os # Added for path handling
+
 
 # --- NEW: AAMVA DTS Endpoints ---
 URL_ROOT_CA = 'https://vical.dts.aamva.org/certificates/ca'
