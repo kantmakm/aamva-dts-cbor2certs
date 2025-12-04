@@ -11,8 +11,6 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric import utils
 from cryptography.exceptions import InvalidSignature
 
-
-# --- Configuration & Endpoints ---
 BASE_URL = "https://vical.dts.aamva.org/"
 
 # Trust Anchor Endpoints
@@ -28,37 +26,37 @@ TARGET_FILENAME = "vical.cbor"
 # --- Helper Functions ---
 
 def get_current_vical_url(base_url):
-    """Scrapes the base URL to find the dynamic link for the current VICAL file."""
-    print(f"🔍 Scraping {base_url} for current VICAL link...")
+    """Scrapes the HTML response from base URL to extract the dynamic link for the current VICAL file."""
+    print(f"🤿 Diving {base_url} for current VICAL link...")
     try:
         response = requests.get(base_url)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"❌ Error fetching the page: {e}")
+        print(f"❗ Error fetching the page: {e}")
         return None
 
     soup = BeautifulSoup(response.content, 'html.parser')
     
-    # 1. Find the specific table
+    # 1: Find the specific table with the current vical download link
     current_vical_table = soup.find('table', id='currentvical')
     if not current_vical_table:
-        print("❌ Error: Could not find table with id='currentvical'.")
+        print("❗ Error: Could not find table with id='currentvical'.")
         return None
 
-    # 2. Find the download button inside that table
+    # 2: Find the download button inside that table
     download_link_tag = current_vical_table.find('a', class_='btn btn-primary')
     if not download_link_tag:
-        print("❌ Error: Could not find 'btn btn-primary' link inside the table.")
+        print("❗ Error: Could not find 'btn btn-primary' link inside the table.")
         return None
 
-    # 3. Construct full URL
+    # 3: Construct full URL
     relative_url = download_link_tag.get('href')
     if not relative_url:
-        print("❌ Error: Link tag missing 'href' attribute.")
+        print("❗ Error: Link tag missing 'href' attribute.")
         return None
         
     full_download_url = urljoin(base_url, relative_url)
-    print(f"✅ Found VICAL URL: {full_download_url}")
+    print(f"✨ Found VICAL URL: {full_download_url}")
     return full_download_url
 
 def download_file(url, destination_path):
@@ -73,7 +71,7 @@ def download_file(url, destination_path):
                 f.write(chunk)
         return True
     except requests.exceptions.RequestException as e:
-        print(f"❌ Download failed: {e}")
+        print(f"❗ Download failed: {e}")
         return False
 
 def load_cert_from_pem(file_path):
@@ -82,10 +80,10 @@ def load_cert_from_pem(file_path):
         with open(file_path, 'rb') as f:
             return x509.load_pem_x509_certificate(f.read())
     except FileNotFoundError:
-        print(f"❌ Certificate file not found: {file_path}")
+        print(f"❗ Certificate file not found: {file_path}")
         return None
     except ValueError:
-        print(f"❌ Could not parse PEM certificate: {file_path}")
+        print(f"❗ Could not parse PEM certificate: {file_path}")
         return None
 
 def load_vical_file(file_path):
@@ -94,7 +92,7 @@ def load_vical_file(file_path):
         with open(file_path, 'rb') as f:
             return cbor2.load(f)
     except (FileNotFoundError, cbor2.CBORDecodeError) as e:
-        print(f"❌ Error loading VICAL file: {e}")
+        print(f"❗ Error loading VICAL file: {e}")
         return None
 
 # --- Core Logic ---
@@ -105,7 +103,7 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
     Handles Raw-to-DER signature conversion for COSE compliance.
     """
     if not isinstance(vical_data, list) or len(vical_data) < 4:
-        print("❌ VICAL structure invalid (expected list of length 4+).")
+        print("❗ Invalid VICAL structure (expected list of length 4+).")
         return
 
     try:
@@ -116,7 +114,7 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
         
         print("\n🔐 Verifying Trust Chain...")
         
-        # 1. Verify VICAL Signer (VSC) using Intermediate CA
+        # 1: Verify VICAL Signer (VSC) using Intermediate CA
         # (X.509 certs use DER signatures natively, so this usually just works)
         intermediate_ca_cert.public_key().verify(
             vsc_cert.signature,
@@ -125,7 +123,7 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
         )
         print("   ✅ VICAL Signer is trusted by Intermediate CA.")
 
-        # 2. Verify Intermediate CA using Root CA
+        # 2: Verify Intermediate CA using Root CA
         root_ca_cert.public_key().verify(
             intermediate_ca_cert.signature,
             intermediate_ca_cert.tbs_certificate_bytes,
@@ -135,7 +133,7 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
         
         print("\n🔐 Verifying VICAL COSE Signature...")
 
-        # --- A. Determine Hash Algorithm from Protected Headers ---
+        # --- 2a: Determine Hash Algorithm from Protected Headers ---
         # Decode the protected header to find the 'alg' ID
         ph_map = cbor2.loads(protected_headers_bytes)
         alg_id = ph_map.get(1) # Label 1 is 'alg'
@@ -154,7 +152,7 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
             hash_alg = hashes.SHA256()
             curve_size = 32
 
-        # --- B. Convert Signature from Raw (COSE) to DER (Python/OpenSSL) ---
+        # --- 2b: Convert Signature from Raw (COSE) to DER (Python/OpenSSL) ---
         # COSE Signatures are R || S (Raw concatenation).
         # Python verify() expects ASN.1 DER.
         if len(raw_signature) != (curve_size * 2):
@@ -164,7 +162,7 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
         s = int.from_bytes(raw_signature[curve_size:], byteorder='big')
         der_signature = utils.encode_dss_signature(r, s)
 
-        # --- C. Construct Sig_Structure and Verify ---
+        # --- 2c: Construct Sig_Structure and Verify ---
         # Structure: ['Signature1', protected_body_bytes, external_aad, payload_bytes]
         sig_structure = ['Signature1', protected_headers_bytes, b'', payload]
         tbs_data = cbor2.dumps(sig_structure)
@@ -176,7 +174,7 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
         )
         print("   ✅ VICAL Payload signature is VALID.")
 
-        # 3. Decode Payload and Extract
+        # 3: Decode Payload and Extract
         decoded_records = cbor2.loads(payload)
         final_records_list = decoded_records.get('certificateInfos')
         extract_and_save_iacas(final_records_list)
@@ -184,18 +182,18 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
     except InvalidSignature:
         print("❌ CRITICAL: Signature validation FAILED. The VICAL file may be tampered with.")
     except Exception as e:
-        print(f"❌ Unexpected error in processing: {e}")
+        print(f"❗ Unexpected error in processing: {e}")
         
 def extract_and_save_iacas(issuer_records):
     """Iterates through records, names them, and saves to disk."""
     if not issuer_records:
-        print("❌ No certificates found in payload.")
+        print("❗ No certificates found in payload.")
         return
 
-    # Create output directory
+    # 1: Create output directory
     OUTPUT_CERT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Map for friendly names
+    # Map for friendly names - this requires manual updates and probably should be deprecated
     rename_map = {
         'alaska_dmv_iaca.pem': 'ak_certificate.pem',
         'carswsnpdojmtgov.pem': 'mt_certificate.pem',
@@ -258,7 +256,7 @@ if __name__ == "__main__":
     # 1. Scrape the URL first
     vical_file_url = get_current_vical_url(BASE_URL)
     if not vical_file_url:
-        print("❌ Could not determine VICAL URL. Exiting.")
+        print("❗ Could not determine VICAL URL. Exiting.")
         exit(1)
 
     # 2. Create Temporary Directory (Auto-cleans up on exit)
@@ -292,7 +290,7 @@ if __name__ == "__main__":
         vsc_cert = load_cert_from_pem(paths['vsc'])
 
         if not (root_ca and inter_ca and vsc_cert):
-            print("\n❌ Failed to load trust chain certificates.")
+            print("\n❗ Failed to load trust chain certificates.")
             exit(1)
 
         # 5. Load VICAL Data
