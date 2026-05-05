@@ -101,8 +101,7 @@ def load_vical_file(file_path):
 
 def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
     """
-    Verifies the cert chain and the COSE_Sign1 signature of the VICAL payload.
-    Handles Raw-to-DER signature conversion for COSE compliance.
+    Verifies the cert chain but skips the COSE_Sign1 signature verification.
     """
     if not isinstance(vical_data, list) or len(vical_data) < 4:
         print("❗ Invalid VICAL structure (expected list of length 4+).")
@@ -110,14 +109,11 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
 
     try:
         # COSE_Sign1 Structure: [protected_headers, unprotected_headers, payload, signature]
-        protected_headers_bytes = vical_data[0]
         payload = vical_data[2]
-        raw_signature = vical_data[3]
 
         print("\n🔐 Verifying Trust Chain...")
 
         # 1: Verify VICAL Signer (VSC) using Intermediate CA
-        # (X.509 certs use DER signatures natively, so this usually just works)
         intermediate_ca_cert.public_key().verify(
             vsc_cert.signature,
             vsc_cert.tbs_certificate_bytes,
@@ -133,56 +129,18 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
         )
         print("   ✅ Intermediate CA is trusted by Root CA.")
 
-        print("\n🔐 Verifying VICAL COSE Signature...")
-
-        # --- 2a: Determine Hash Algorithm from Protected Headers ---
-        # Decode the protected header to find the 'alg' ID
-        ph_map = cbor2.loads(protected_headers_bytes)
-        alg_id = ph_map.get(1) # Label 1 is 'alg'
-
-        # Default to SHA256 (ES256), but handle others
-        if alg_id == -7:  # ES256
-            hash_alg = hashes.SHA256()
-            curve_size = 32 # bytes (256 bits)
-            print("      -> Algorithm: ES256 (SHA-256)")
-        elif alg_id == -35: # ES384
-            hash_alg = hashes.SHA384()
-            curve_size = 48 # bytes (384 bits)
-            print("      -> Algorithm: ES384 (SHA-384)")
-        else:
-            print(f"      ⚠️ Unknown Algorithm ID: {alg_id}. Defaulting to SHA256.")
-            hash_alg = hashes.SHA256()
-            curve_size = 32
-
-        # --- 2b: Convert Signature from Raw (COSE) to DER (Python/OpenSSL) ---
-        # COSE Signatures are R || S (Raw concatenation).
-        # Python verify() expects ASN.1 DER.
-        if len(raw_signature) != (curve_size * 2):
-            print(f"      ⚠️ Warning: Signature length {len(raw_signature)} does not match expected {curve_size*2}.")
-
-        r = int.from_bytes(raw_signature[:curve_size], byteorder='big')
-        s = int.from_bytes(raw_signature[curve_size:], byteorder='big')
-        der_signature = utils.encode_dss_signature(r, s)
-
-        # --- 2c: Construct Sig_Structure and Verify ---
-        # Structure: ['Signature1', protected_body_bytes, external_aad, payload_bytes]
-        sig_structure = ['Signature1', protected_headers_bytes, b'', payload]
-        tbs_data = cbor2.dumps(sig_structure)
-
-        vsc_cert.public_key().verify(
-            der_signature, # Use the converted DER signature
-            tbs_data,
-            ec.ECDSA(hash_alg)
-        )
-        print("   ✅ VICAL Payload signature is VALID.")
+        print("\n⚠️  Skipping VICAL COSE Signature verification as requested.")
 
         # 3: Decode Payload and Extract
+        # We go straight to decoding the 'payload' (index 2 of the COSE structure)
         decoded_records = cbor2.loads(payload)
         final_records_list = decoded_records.get('certificateInfos')
-        extract_and_save_iacas(final_records_list)
 
-    except InvalidSignature:
-        print("❌ CRITICAL: Signature validation FAILED. The VICAL file may be tampered with.")
+        if final_records_list:
+            extract_and_save_iacas(final_records_list)
+        else:
+            print("❗ Error: 'certificateInfos' key not found in payload.")
+
     except Exception as e:
         print(f"❗ Unexpected error in processing: {e}")
 
