@@ -54,21 +54,23 @@ def get_current_vical_url(base_url):
     if not relative_url:
         print("❗ Error: Link tag missing 'href' attribute.")
         return None
-        
+
     full_download_url = urljoin(base_url, relative_url)
     print(f"✨ Found VICAL URL: {full_download_url}")
     return full_download_url
 
 def download_file(url, destination_path):
-    """Downloads a file from a URL to a specified Path object."""
     print(f"⬇️  Downloading {url}...")
     try:
-        response = requests.get(url, stream=True)
+        # Add a common User-Agent to avoid being flagged as a 'bot' by some filters
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, stream=True, headers=headers, timeout=30)
         response.raise_for_status()
-        
+
         with open(destination_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+            for chunk in response.iter_content(chunk_size=None): # Use None for auto-chunking
+                if chunk: 
+                    f.write(chunk)
         return True
     except requests.exceptions.RequestException as e:
         print(f"❗ Download failed: {e}")
@@ -111,9 +113,9 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
         protected_headers_bytes = vical_data[0]
         payload = vical_data[2]
         raw_signature = vical_data[3]
-        
+
         print("\n🔐 Verifying Trust Chain...")
-        
+
         # 1: Verify VICAL Signer (VSC) using Intermediate CA
         # (X.509 certs use DER signatures natively, so this usually just works)
         intermediate_ca_cert.public_key().verify(
@@ -130,14 +132,14 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
             ec.ECDSA(intermediate_ca_cert.signature_hash_algorithm),
         )
         print("   ✅ Intermediate CA is trusted by Root CA.")
-        
+
         print("\n🔐 Verifying VICAL COSE Signature...")
 
         # --- 2a: Determine Hash Algorithm from Protected Headers ---
         # Decode the protected header to find the 'alg' ID
         ph_map = cbor2.loads(protected_headers_bytes)
         alg_id = ph_map.get(1) # Label 1 is 'alg'
-        
+
         # Default to SHA256 (ES256), but handle others
         if alg_id == -7:  # ES256
             hash_alg = hashes.SHA256()
@@ -157,7 +159,7 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
         # Python verify() expects ASN.1 DER.
         if len(raw_signature) != (curve_size * 2):
             print(f"      ⚠️ Warning: Signature length {len(raw_signature)} does not match expected {curve_size*2}.")
-        
+
         r = int.from_bytes(raw_signature[:curve_size], byteorder='big')
         s = int.from_bytes(raw_signature[curve_size:], byteorder='big')
         der_signature = utils.encode_dss_signature(r, s)
@@ -170,7 +172,7 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
         vsc_cert.public_key().verify(
             der_signature, # Use the converted DER signature
             tbs_data,
-            ec.ECDSA(hash_alg) 
+            ec.ECDSA(hash_alg)
         )
         print("   ✅ VICAL Payload signature is VALID.")
 
@@ -183,7 +185,7 @@ def process_vical(vical_data, root_ca_cert, intermediate_ca_cert, vsc_cert):
         print("❌ CRITICAL: Signature validation FAILED. The VICAL file may be tampered with.")
     except Exception as e:
         print(f"❗ Unexpected error in processing: {e}")
-        
+
 def extract_and_save_iacas(issuer_records):
     """Iterates through records, names them, and saves to disk."""
     if not issuer_records:

@@ -1,13 +1,5 @@
-# For making HTTP requests to download files
-requests
-
-# For parsing CBOR (Concise Binary Object Representation) data
-cbor2
-
-# For cryptographic operations (certificates, signatures, etc.)
-cryptography
-
-bs4
-
-urllib3
-
+requests==2.32.3
+beautifulsoup4==4.12.3
+urllib3==2.2.1
+cbor2==5.6.3
+cryptography>=42.0.0
